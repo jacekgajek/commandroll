@@ -1,13 +1,13 @@
+import io.kotest.assertions.fail
 import io.kotest.assertions.throwables.shouldNotThrow
 import io.kotest.assertions.throwables.shouldThrow
 import io.kotest.core.spec.style.FunSpec
+import io.kotest.matchers.collections.shouldHaveSize
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.shouldNotBe
 import io.kotest.matchers.throwable.shouldHaveMessage
-import pl.jacekgajek.commandroll.ICommand
-import pl.jacekgajek.commandroll.ICommandBindingBlock
-import pl.jacekgajek.commandroll.command
-import pl.jacekgajek.commandroll.commandBinding
+import io.kotest.matchers.types.shouldBeInstanceOf
+import pl.jacekgajek.commandroll.*
 
 class CommandTest : FunSpec() {
 
@@ -42,7 +42,7 @@ class CommandTest : FunSpec() {
             }
             result.isSuccess shouldBe false
             result.exceptionOrNull() shouldNotBe null
-            result.exceptionOrNull()!! shouldHaveMessage("some error")
+            result.exceptionOrNull()!! shouldHaveMessage ("some error")
             okCalls shouldBe 1
             failCalls shouldBe 1
             okRollbackCalls shouldBe 1
@@ -201,7 +201,7 @@ class CommandTest : FunSpec() {
                 okCmd.bindCommand()
             }
             result.exceptionOrNull() shouldNotBe null
-            result.exceptionOrNull()!! shouldHaveMessage("some error")
+            result.exceptionOrNull()!! shouldHaveMessage ("some error")
             okCalls shouldBe 0
             failCalls shouldBe 1
             okRollbackCalls shouldBe 0
@@ -235,7 +235,7 @@ class CommandTest : FunSpec() {
                 }.bind()
             }
             result.exceptionOrNull() shouldNotBe null
-            result.exceptionOrNull()!! shouldHaveMessage("some error")
+            result.exceptionOrNull()!! shouldHaveMessage ("some error")
             okCalls shouldBe 1
             failCalls shouldBe 1
             okRollbackCalls shouldBe 0
@@ -252,7 +252,7 @@ class CommandTest : FunSpec() {
                 }.bind()
             }
             result.exceptionOrNull() shouldNotBe null
-            result.exceptionOrNull()!! shouldHaveMessage("some error")
+            result.exceptionOrNull()!! shouldHaveMessage ("some error")
             okCalls shouldBe 1
             failCalls shouldBe 1
             okRollbackCalls shouldBe 1
@@ -276,7 +276,7 @@ class CommandTest : FunSpec() {
                 failingCmd.bindCommand()
             }
             result.exceptionOrNull() shouldNotBe null
-            result.exceptionOrNull()!! shouldHaveMessage("some error")
+            result.exceptionOrNull()!! shouldHaveMessage ("some error")
             okCalls shouldBe 1
             failCalls shouldBe 1
             okRollbackCalls shouldBe 1
@@ -290,7 +290,7 @@ class CommandTest : FunSpec() {
                 bindQueuedCommands()
             }
             result.exceptionOrNull() shouldNotBe null
-            result.exceptionOrNull()!! shouldHaveMessage("some error")
+            result.exceptionOrNull()!! shouldHaveMessage ("some error")
             okCalls shouldBe 0
             failCalls shouldBe 1
             okRollbackCalls shouldBe 0
@@ -303,11 +303,36 @@ class CommandTest : FunSpec() {
                 failingCmd.bindCommand()
             }
             result.exceptionOrNull() shouldNotBe null
-            result.exceptionOrNull()!! shouldHaveMessage("some error")
+            result.exceptionOrNull()!! shouldHaveMessage ("some error")
             okCalls shouldBe 1
             failCalls shouldBe 1
             okRollbackCalls shouldBe 1
             failRollbackCalls shouldBe 0
+        }
+
+        test("WHEN strategy is OnErrorContinue, THEN all rollbacks are executed even if exception happens") {
+            var throwingRollCalls = 0
+            var rollCalls = 0
+            val success1 = command("success", { Result.success(1) }) { rollCalls++; Result.success("456") }
+            val rollbackThrowing1 = command("throwing", { Result.success(2) }) { throwingRollCalls++; throw IllegalStateException("rollback") }
+            val rollbackThrowing2 = command("throwing", { Result.success(3) }) { throwingRollCalls++; throw IllegalArgumentException("rollback") }
+            val success2 = command("success", { Result.failure(IndexOutOfBoundsException()) }) { rollCalls++; Result.success("567") }
+            try {
+                commandBinding(RollbackStrategy.OnErrorContinue) {
+                    success1.bindCommand()
+                    rollbackThrowing1.bindCommand()
+                    rollbackThrowing2.bindCommand()
+                    success2.bindCommand()
+                }
+                fail("Should throw")
+            } catch (e: IllegalArgumentException) {
+                e.suppressed shouldHaveSize 1
+                e.suppressed[0].shouldBeInstanceOf<IllegalStateException>()
+            } catch (e: Throwable) {
+                fail("Should throw the first exception")
+            }
+            rollCalls shouldBe 1
+            throwingRollCalls shouldBe 2
         }
     }
 

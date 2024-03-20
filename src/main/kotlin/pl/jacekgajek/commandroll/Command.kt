@@ -29,8 +29,8 @@ fun <T : Any> command(name: String = "", command: () -> Result<T>, rollbackFun: 
  *
  * @see ICommandBindingBlock
  */
-fun <T : Any> commandBinding(block: ICommandBindingBlock.() -> T): Result<T> {
-    return commandBinding(null, block)
+fun <T : Any> commandBinding(rollbackStrategy: RollbackStrategy = RollbackStrategy.OnErrorTerminate, block: ICommandBindingBlock.() -> T): Result<T> {
+    return commandBinding(null, rollbackStrategy, block)
 }
 
 /**
@@ -42,10 +42,14 @@ fun <T : Any> commandBinding(block: ICommandBindingBlock.() -> T): Result<T> {
  * fun ICommandBindingBlock.funName(): T { ... }
  * ```
  */
-fun <T : Any> commandBinding(parent: ICommandBindingBlock?, block: ICommandBindingBlock.() -> T): Result<T> {
+fun <T : Any> commandBinding(
+    parent: ICommandBindingBlock?,
+    rollbackStrategy: RollbackStrategy = RollbackStrategy.OnErrorTerminate,
+    block: ICommandBindingBlock.() -> T
+): Result<T> {
     val queues = (parent as? CommandBindingBlock)?.queueStack ?: LinkedList()
 
-    val blockImpl = CommandBindingBlock(queueStack = queues)
+    val blockImpl = CommandBindingBlock(queueStack = queues, rollbackStrategy = rollbackStrategy)
     return try {
         val blockRes = block(blockImpl)
         val queue = queues.pop()
@@ -72,9 +76,33 @@ private fun ensureQueueIsEmpty(unexecutedCommands: Collection<ICommand<*>>) {
         }
 }
 
+enum class RollbackStrategy {
+    /**
+     * If a rollback throws an exception, the rollback process is terminated and the exception is rethrown
+     */
+    OnErrorTerminate,
+
+    /**
+     * If a rollback throws an exception, the rollback process is continued and the first occurred exception is rethrown in the
+     * end, with all suppressed exception accessible with [Throwable.suppressedExceptions].
+     */
+    OnErrorContinue,
+}
+
 interface ICommand<T : Any> {
+    /**
+     * Descriptive name of the command
+     */
     val name: String
+
+    /**
+     * Execute the command. If this method throws an exception, it is wrapped in Result.failure(e).
+     */
     fun execute(): Result<T>
+
+    /**
+     * Undo actions performed by the [execute] method.
+     */
     fun rollback(): Result<*>?
 }
 
@@ -117,7 +145,7 @@ private class Command<T : Any>(
             throw IllegalStateException("This command ('$name') has already been executed.")
         }
         log.debug { "Executing command: '$name'" }
-        val result = executor()
+        val result = runCatching { executor() }.flatten()
         this.result = result.getOrNull()
         return result
     }
@@ -149,6 +177,7 @@ private class CommandBindingBlockException(val reason: Throwable) : RuntimeExcep
 private class CommandBindingBlock(
     private val executedCommands: MutableList<ICommand<*>> = LinkedList(),
     val queueStack: Deque<Queue<ICommand<*>>>,
+    private val rollbackStrategy: RollbackStrategy
 ) : ICommandBindingBlock {
     init {
         queueStack.push(LinkedList())
@@ -209,23 +238,54 @@ private class CommandBindingBlock(
     @Suppress("TooGenericExceptionCaught")
     private fun rollbackExecutedCommands() {
         val rolledBack = mutableListOf<ICommand<*>>()
-        try {
-            if (localQueue().isNotEmpty()) {
-                log.warn { "These commands where queued but won't be executed because a rollback was triggered: ${localQueue()}." }
-            }
-            while (executedCommands.isNotEmpty()) {
-                val c = executedCommands.removeLast()
+        val suppressedExceptions = mutableListOf<Throwable>()
+        if (localQueue().isNotEmpty()) {
+            log.warn { "These commands where queued but won't be executed because a rollback was triggered: ${localQueue()}." }
+        }
+        while (executedCommands.isNotEmpty()) {
+            val c = executedCommands.removeLast()
+            try {
                 c.rollback()
                 rolledBack.add(c)
+            } catch (e: Throwable) {
+                when (rollbackStrategy) {
+                    RollbackStrategy.OnErrorTerminate -> {
+                        log.error {
+                            "Rollback terminated because of an unhandled exception. Commands which weren't rolled back: $executedCommands." +
+                                    " Rolled back: $rolledBack. Exception: '${e.message}'. Stack trace: ${e.stackTraceToString()}"
+                        }
+                        throw e
+                    }
+
+                    RollbackStrategy.OnErrorContinue -> {
+                        log.error {
+                            "Failed to rollback command: '${c.name}'. Exception: '${e.message}'. Stack trace: ${e.stackTraceToString()}. Trying to rollback the remaining commands " +
+                                    "because the rollbackStrategy was set to $rollbackStrategy"
+                        }
+                        suppressedExceptions.add(e)
+                    }
+                }
             }
-        } catch (e: Throwable) {
-            log.error {
-                "Rollback terminated because of an unhandled exception. Commands which weren't rolled back: $executedCommands." +
-                        " Rolled back: $rolledBack. Exception: '${e.message}'. Stack trace: ${e.stackTraceToString()}"
-            }
+        }
+        if (suppressedExceptions.isNotEmpty()) {
+            log.error { "Roll back failed for one or more commands. Throwing the last exception. The suppressed exception are available under Throwable.getSuppressed()" }
+            val e = suppressedExceptions.first()
+            suppressedExceptions.drop(1).forEach { e.addSuppressed(it) }
             throw e
         }
     }
 
     private fun localQueue() = queueStack.peek() ?: throw IllegalStateException("Queue not initialized")
 }
+
+inline fun <T, K> Result<T>.flatMap(mapper: (T) -> Result<K>): Result<K> =
+    if (isFailure)
+        Result.failure(exceptionOrNull()!!)
+    else
+        mapper(getOrThrow())
+
+inline fun <T> Result<Result<T>>.flatten(): Result<T> =
+    if (isFailure)
+        Result.failure(this.exceptionOrNull()!!)
+    else
+        getOrThrow()
