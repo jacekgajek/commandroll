@@ -5,6 +5,7 @@ plugins {
 
 group = "io.github.jacekgajek"
 version = "0.1.1"
+description = "Saga pattern implementation with rollback functions based on kotlin.Result union."
 
 repositories {
     mavenCentral()
