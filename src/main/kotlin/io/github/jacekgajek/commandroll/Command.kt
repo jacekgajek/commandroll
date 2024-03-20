@@ -1,11 +1,11 @@
-package pl.jacekgajek.commandroll
+package io.github.jacekgajek.commandroll
 
 import mu.KotlinLogging
 import java.util.Deque
 import java.util.LinkedList
 import java.util.Queue
 
-private val log = KotlinLogging.logger("pl.jacekgajek.commandroll")
+private val log = KotlinLogging.logger {}
 
 fun <T : Any> command(name: String = "", command: () -> Result<T>): ICommand<T> = Command(name, command)
 fun <T : Any> command(name: String = "", command: () -> Result<T>, rollbackFun: (T) -> Result<*>): ICommand<T> =

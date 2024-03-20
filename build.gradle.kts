@@ -3,8 +3,8 @@ plugins {
     application
 }
 
-group = "pl.jacekgajek"
-version = "1.0-SNAPSHOT"
+group = "io.github.jacekgajek"
+version = "0.1.1"
 
 repositories {
     mavenCentral()

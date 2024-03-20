@@ -1,3 +1,4 @@
+import io.github.jacekgajek.commandroll.*
 import io.kotest.assertions.fail
 import io.kotest.assertions.throwables.shouldNotThrow
 import io.kotest.assertions.throwables.shouldThrow
@@ -7,7 +8,6 @@ import io.kotest.matchers.shouldBe
 import io.kotest.matchers.shouldNotBe
 import io.kotest.matchers.throwable.shouldHaveMessage
 import io.kotest.matchers.types.shouldBeInstanceOf
-import pl.jacekgajek.commandroll.*
 
 class CommandTest : FunSpec() {
 
